@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Context Generator</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #f9fafb; color: #111827; }
+        .card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+        input[type="text"], textarea { width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; }
+        textarea { height: 100px; resize: vertical; }
+        button { background: #2563eb; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 600; }
+        button:hover { background: #1d4ed8; }
+        button:disabled { background: #9ca3af; cursor: not-allowed; }
+        .success-btn { background: #10b981; }
+        .success-btn:hover { background: #059669; }
+        #file-list { max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; padding: 1rem; border-radius: 4px; background: #f8fafc; }
+        .file-item { margin-bottom: 0.25rem; font-family: monospace; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
+        .ignored { color: #9ca3af; text-decoration: line-through; }
+        .controls { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+
+    <h1>Code Context Generator</h1>
+
+    <div class="card">
+        <div class="form-group">
+            <label for="dir-path">Project Folder Path (Absolute or Relative):</label>
+            <input type="text" id="dir-path" placeholder="e.g., C:\Projects\MyApp or ./my_project">
+        </div>
+        <div class="controls">
+            <label style="font-weight: normal; margin: 0;">
+                <input type="checkbox" id="use-gitignore" checked> Exclude .gitignore files
+            </label>
+            <button onclick="scanDirectory()">Load Directory</button>
+        </div>
+        <div id="error-msg" style="color: #ef4444; margin-bottom: 1rem;"></div>
+        
+        <label>Select Files to Include:</label>
+        <div class="controls" style="margin-bottom: 0.5rem;">
+            <button onclick="selectAll()" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">Select All</button>
+            <button onclick="deselectAll()" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">Deselect All</button>
+        </div>
+        <div id="file-list">
+            <em>No directory loaded yet.</em>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="form-group">
+            <label for="prompt">LLM Prompt / Instructions:</label>
+            <textarea id="prompt" placeholder="E.g., Review this code and find the bug..."></textarea>
+        </div>
+        <button id="copy-btn" class="success-btn" onclick="generateAndCopy()" disabled>Copy Prompt + Code to Clipboard</button>
+    </div>
+
+    <script>
+        // On page load, restore saved states from Local Storage
+        window.onload = () => {
+            const savedPath = localStorage.getItem('savedPath');
+            const savedPrompt = localStorage.getItem('savedPrompt');
+            if (savedPath) document.getElementById('dir-path').value = savedPath;
+            if (savedPrompt) document.getElementById('prompt').value = savedPrompt;
+        };
+
+        // Save states as user types
+        document.getElementById('dir-path').addEventListener('input', (e) => localStorage.setItem('savedPath', e.target.value));
+        document.getElementById('prompt').addEventListener('input', (e) => localStorage.setItem('savedPrompt', e.target.value));
+
+        async function scanDirectory() {
+            const path = document.getElementById('dir-path').value;
+            const useGitignore = document.getElementById('use-gitignore').checked;
+            const errorMsg = document.getElementById('error-msg');
+            const fileList = document.getElementById('file-list');
+            const copyBtn = document.getElementById('copy-btn');
+
+            errorMsg.innerText = '';
+            fileList.innerHTML = '<em>Scanning...</em>';
+            copyBtn.disabled = true;
+
+            try {
+                const response = await fetch('/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path, use_gitignore: useGitignore })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    errorMsg.innerText = data.error;
+                    fileList.innerHTML = '';
+                    return;
+                }
+
+                renderFileList(data.files, path);
+                copyBtn.disabled = false;
+
+            } catch (err) {
+                errorMsg.innerText = 'Failed to communicate with server.';
+            }
+        }
+
+        function renderFileList(files, basePath) {
+            const container = document.getElementById('file-list');
+            container.innerHTML = '';
+            
+            // Get previously checked files from local storage
+            const savedFiles = JSON.parse(localStorage.getItem(`checkedFiles_${basePath}`) || '[]');
+
+            files.forEach(file => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = file.path;
+                checkbox.className = 'file-checkbox';
+                
+                // Determine if it should be checked
+                if (savedFiles.length > 0) {
+                    // If we have history, rely on that
+                    checkbox.checked = savedFiles.includes(file.path);
+                } else {
+                    // Since all ignored files are filtered out by the backend, 
+                    // we can safely default everything shown to "checked"
+                    checkbox.checked = true; 
+                }
+
+                // Save state when clicked
+                checkbox.addEventListener('change', () => saveCheckedState(basePath));
+
+                const label = document.createElement('span');
+                label.innerText = file.path;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                container.appendChild(div);
+            });
+            
+            // Save initial state if it's the first time
+            if (savedFiles.length === 0) saveCheckedState(basePath);
+        }
+        function saveCheckedState(basePath) {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            const checkedFiles = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+            localStorage.setItem(`checkedFiles_${basePath}`, JSON.stringify(checkedFiles));
+        }
+
+        function selectAll() {
+            document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = true);
+            saveCheckedState(document.getElementById('dir-path').value);
+        }
+
+        function deselectAll() {
+            document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = false);
+            saveCheckedState(document.getElementById('dir-path').value);
+        }
+
+        async function generateAndCopy() {
+            const copyBtn = document.getElementById('copy-btn');
+            const originalText = copyBtn.innerText;
+            copyBtn.innerText = 'Generating...';
+            copyBtn.disabled = true;
+
+            const basePath = document.getElementById('dir-path').value;
+            const prompt = document.getElementById('prompt').value;
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            const selectedFiles = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ files: selectedFiles, prompt: prompt, base_path: basePath })
+                });
+
+                const data = await response.json();
+
+                if (data.result) {
+                    await navigator.clipboard.writeText(data.result);
+                    copyBtn.innerText = 'Copied to Clipboard! ✓';
+                    setTimeout(() => {
+                        copyBtn.innerText = originalText;
+                        copyBtn.disabled = false;
+                    }, 2000);
+                }
+            } catch (err) {
+                alert('Failed to generate or copy text.');
+                copyBtn.innerText = originalText;
+                copyBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
