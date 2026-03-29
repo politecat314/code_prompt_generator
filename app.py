@@ -17,6 +17,10 @@ def get_gitignore_spec(dir_path):
 def index():
     return render_template('index.html')
 
+@app.route('/cover_letter')
+def cover_letter():
+    return render_template('cover_letter.html')
+
 @app.route('/scan', methods=['POST'])
 def scan_dir():
     data = request.json

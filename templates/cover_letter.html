@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cover Letter Generator</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #f9fafb; color: #111827; }
+        .card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; }
+        .form-group { margin-bottom: 1.5rem; }
+        label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+        textarea { width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; resize: vertical; font-family: inherit;}
+        #prompt { height: 100px; }
+        #cv, #job-description { height: 250px; }
+        button { background: #2563eb; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 600; }
+        button:hover { background: #1d4ed8; }
+        .success-btn { background: #10b981; font-size: 1.1rem; padding: 0.75rem 1.5rem; width: 100%; }
+        .success-btn:hover { background: #059669; }
+        
+        /* NAV STYLES */
+        nav { margin-bottom: 2rem; }
+        nav a { text-decoration: none; padding: 0.5rem 1rem; border-radius: 4px; margin-right: 0.5rem; font-weight: 600;}
+        nav a.active { background: #2563eb; color: white; }
+        nav a:not(.active) { color: #4b5563; background: #e5e7eb; }
+        nav a:not(.active):hover { background: #d1d5db; }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <a href="/">Code Context</a>
+        <a href="/cover_letter" class="active">Cover Letter Generator</a>
+    </nav>
+
+    <h1>Cover Letter Generator</h1>
+
+    <div class="card">
+        <div class="form-group">
+            <label for="prompt">Prompt / Instructions (Auto-saved):</label>
+            <textarea id="prompt" placeholder="E.g., Please write a compelling cover letter based on my CV and the provided Job Description..."></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="cv">Your CV (Auto-saved):</label>
+            <textarea id="cv" placeholder="Paste your full CV/Resume here..."></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="job-description">Job Description:</label>
+            <textarea id="job-description" placeholder="Paste the specific job description you are applying for here..."></textarea>
+        </div>
+
+        <button id="copy-btn" class="success-btn" onclick="generateAndCopy()">Copy Combined Prompt</button>
+    </div>
+
+    <script>
+        // On page load, restore saved states from Local Storage
+        window.onload = () => {
+            const savedPrompt = localStorage.getItem('cl_savedPrompt');
+            const savedCV = localStorage.getItem('cl_savedCV');
+            
+            if (savedPrompt) document.getElementById('prompt').value = savedPrompt;
+            if (savedCV) document.getElementById('cv').value = savedCV;
+        };
+
+        // Save states as user types (Only saving CV and Prompt, JD is left dynamic)
+        document.getElementById('prompt').addEventListener('input', (e) => localStorage.setItem('cl_savedPrompt', e.target.value));
+        document.getElementById('cv').addEventListener('input', (e) => localStorage.setItem('cl_savedCV', e.target.value));
+
+        async function generateAndCopy() {
+            const copyBtn = document.getElementById('copy-btn');
+            const originalText = copyBtn.innerText;
+            
+            const prompt = document.getElementById('prompt').value.trim();
+            const cv = document.getElementById('cv').value.trim();
+            const jd = document.getElementById('job-description').value.trim();
+
+            // Construct the final prompt structure
+            let finalOutput = `${prompt}\n\n`;
+            
+            if (cv) {
+                finalOutput += `--- MY CV ---\n${cv}\n\n`;
+            }
+            if (jd) {
+                finalOutput += `--- JOB DESCRIPTION ---\n${jd}\n\n`;
+            }
+
+            try {
+                await navigator.clipboard.writeText(finalOutput);
+                copyBtn.innerText = 'Copied to Clipboard! ✓';
+                copyBtn.style.background = '#059669'; // darker green
+                setTimeout(() => {
+                    copyBtn.innerText = originalText;
+                    copyBtn.style.background = ''; // reset to class default
+                }, 2000);
+            } catch (err) {
+                alert('Failed to copy text. Make sure you are running this in a secure context (localhost or HTTPS).');
+            }
+        }
+    </script>
+</body>
+</html>

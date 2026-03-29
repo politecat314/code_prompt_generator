@@ -20,9 +20,20 @@
         .file-item { margin-bottom: 0.25rem; font-family: monospace; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
         .ignored { color: #9ca3af; text-decoration: line-through; }
         .controls { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+        /* NEW NAV STYLES */
+        nav { margin-bottom: 2rem; }
+        nav a { text-decoration: none; padding: 0.5rem 1rem; border-radius: 4px; margin-right: 0.5rem; font-weight: 600;}
+        nav a.active { background: #2563eb; color: white; }
+        nav a:not(.active) { color: #4b5563; background: #e5e7eb; }
+        nav a:not(.active):hover { background: #d1d5db; }
     </style>
 </head>
 <body>
+
+    <nav>
+        <a href="/" class="active">Code Context</a>
+        <a href="/cover_letter">Cover Letter Generator</a>
+    </nav>
 
     <h1>Code Context Generator</h1>
 
