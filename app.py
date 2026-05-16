@@ -90,6 +90,35 @@ def generate():
 
     return jsonify({'result': result})
 
+@app.route('/autocomplete', methods=['POST'])
+def autocomplete():
+    data = request.json
+    partial_path = data.get('path', '')
+    
+    try:
+        path_obj = pathlib.Path(partial_path)
+        
+        # Determine if we are completing inside a directory or completing a directory name
+        if partial_path.endswith(os.sep) or partial_path.endswith('/'):
+            search_dir = path_obj
+            prefix = ""
+        else:
+            search_dir = path_obj.parent
+            prefix = path_obj.name
+
+        if not search_dir.exists() or not search_dir.is_dir():
+            return jsonify({'matches': []})
+
+        matches = []
+        for item in search_dir.iterdir():
+            if item.is_dir() and item.name.lower().startswith(prefix.lower()):
+                matches.append(str(item))
+        
+        return jsonify({'matches': matches})
+    except Exception as e:
+        return jsonify({'matches': []})
+    
+
 if __name__ == '__main__':
     # Runs locally on port 5000
     app.run(debug=True)

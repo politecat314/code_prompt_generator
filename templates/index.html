@@ -26,6 +26,10 @@
         nav a.active { background: #2563eb; color: white; }
         nav a:not(.active) { color: #4b5563; background: #e5e7eb; }
         nav a:not(.active):hover { background: #d1d5db; }
+
+        .recent-folders { font-size: 0.85rem; color: #4b5563; margin-bottom: 0.75rem; display: flex; gap: 0.5rem; align-items: center; }
+        .recent-folder-btn { background: #e5e7eb; border: none; padding: 0.25rem 0.5rem; border-radius: 4px; cursor: pointer; color: #111827; font-size: 0.8rem; font-family: monospace; }
+        .recent-folder-btn:hover { background: #d1d5db; }
     </style>
 </head>
 <body>
@@ -39,8 +43,9 @@
 
     <div class="card">
         <div class="form-group">
+            <div id="recent-folders-container" class="recent-folders"></div>
             <label for="dir-path">Project Folder Path (Absolute or Relative):</label>
-            <input type="text" id="dir-path" placeholder="e.g., C:\Projects\MyApp or ./my_project">
+            <input type="text" id="dir-path" placeholder="e.g., C:\Projects\MyApp or ./my_project" autocomplete="off">
         </div>
         <div class="controls">
             <label style="font-weight: normal; margin: 0;">
@@ -69,24 +74,212 @@
     </div>
 
     <script>
-        // On page load, restore saved states from Local Storage
+        // 1. Core On Load Initialization
         window.onload = () => {
+            renderRecentFolders();
             const savedPath = localStorage.getItem('savedPath');
-            const savedPrompt = localStorage.getItem('savedPrompt');
-            if (savedPath) document.getElementById('dir-path').value = savedPath;
-            if (savedPrompt) document.getElementById('prompt').value = savedPrompt;
+            if (savedPath) {
+                document.getElementById('dir-path').value = savedPath;
+                loadPromptForPath(savedPath);
+                scanDirectory(); // Auto-load on page open
+            }
         };
 
-        // Save states as user types
-        document.getElementById('dir-path').addEventListener('input', (e) => localStorage.setItem('savedPath', e.target.value));
-        document.getElementById('prompt').addEventListener('input', (e) => localStorage.setItem('savedPrompt', e.target.value));
+        // 2. Local Storage Handlers
+        function loadPromptForPath(path) {
+            const prompt = localStorage.getItem(`savedPrompt_${path}`) || '';
+            document.getElementById('prompt').value = prompt;
+        }
 
+        document.getElementById('dir-path').addEventListener('input', (e) => {
+            const newPath = e.target.value;
+            localStorage.setItem('savedPath', newPath);
+            loadPromptForPath(newPath); // Switch prompt based on folder
+        });
+
+        document.getElementById('prompt').addEventListener('input', (e) => {
+            const currentPath = document.getElementById('dir-path').value;
+            localStorage.setItem(`savedPrompt_${currentPath}`, e.target.value);
+        });
+
+        // 3. Autocomplete with TAB key & Scan with ENTER key
+        document.getElementById('dir-path').addEventListener('keydown', async (e) => {
+            // NEW: Run scan on Enter
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                scanDirectory();
+                return;
+            }
+
+            if (e.key === 'Tab') {
+                e.preventDefault(); // Prevent moving focus
+                const pathInput = document.getElementById('dir-path');
+                const currentVal = pathInput.value;
+                if (!currentVal) return;
+
+                try {
+                    const response = await fetch('/autocomplete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentVal })
+                    });
+                    const data = await response.json();
+                    
+                    if (data.matches && data.matches.length > 0) {
+                        const matches = data.matches;
+                        if (matches.length === 1) {
+                            // Exact match, append separator
+                            const isWindows = matches[0].includes('\\');
+                            pathInput.value = matches[0] + (isWindows ? '\\' : '/');
+                        } else {
+                            // Find common prefix so user can keep typing
+                            let common = matches[0];
+                            for (let i = 1; i < matches.length; i++) {
+                                let j = 0;
+                                while (j < common.length && j < matches[i].length && common[j].toLowerCase() === matches[i][j].toLowerCase()) {
+                                    j++;
+                                }
+                                common = common.substring(0, j);
+                            }
+                            pathInput.value = common;
+                        }
+                        
+                        // Update storage based on new autocompleted path
+                        localStorage.setItem('savedPath', pathInput.value);
+                        loadPromptForPath(pathInput.value);
+                    }
+                } catch (err) {
+                    console.error('Autocomplete failed', err);
+                }
+            }
+        });
+
+        // 4. Recent Folders Logic
+        function saveRecentFolder(path) {
+            if (!path) return;
+            let recents = JSON.parse(localStorage.getItem('recentFolders') || '[]');
+            
+            // Normalize path to ignore slash direction and case differences
+            const normalize = p => p.replace(/\\/g, '/').toLowerCase();
+            const normalizedNewPath = normalize(path);
+
+            // Remove it if it already exists (using the normalized comparison)
+            recents = recents.filter(p => normalize(p) !== normalizedNewPath);
+            
+            // Bump the newly searched path to the front
+            recents.unshift(path);
+            if (recents.length > 3) recents = recents.slice(0, 3); // Keeps last 3
+            
+            localStorage.setItem('recentFolders', JSON.stringify(recents));
+            renderRecentFolders();
+        }
+
+        // Helper function to get unique display names
+        function getUniqueDisplayNames(paths) {
+            const parsed = paths.map(p => ({
+                original: p,
+                parts: p.split(/[\\/]/).filter(Boolean)
+            }));
+            
+            // Start by assuming we just need the last folder name
+            let displayNames = parsed.map(p => ({
+                original: p.original,
+                parts: p.parts,
+                depth: 1,
+                name: p.parts.length > 0 ? p.parts[p.parts.length - 1] : p.original
+            }));
+
+            let hasDuplicates = true;
+            let safety = 0; // Prevent infinite loops
+            
+            while (hasDuplicates && safety < 10) {
+                safety++;
+                hasDuplicates = false;
+                
+                // Count occurrences of each display name
+                const counts = {};
+                displayNames.forEach(item => {
+                    counts[item.name] = (counts[item.name] || 0) + 1;
+                });
+                
+                // If a name is used more than once, add the parent folder to the display name
+                displayNames.forEach(item => {
+                    if (counts[item.name] > 1 && item.depth < item.parts.length) {
+                        item.depth++;
+                        item.name = item.parts.slice(-item.depth).join('/'); // Format: parent/folder
+                        hasDuplicates = true;
+                    }
+                });
+            }
+            
+            // Map original paths to their unique display names
+            const nameMap = {};
+            displayNames.forEach(item => {
+                nameMap[item.original] = item.name;
+            });
+            return nameMap;
+        }
+
+        function renderRecentFolders() {
+            const container = document.getElementById('recent-folders-container');
+            let recents = JSON.parse(localStorage.getItem('recentFolders') || '[]');
+            
+            // --- NEW: Cleanup existing bugged duplicates from localStorage ---
+            const normalize = p => p.replace(/\\/g, '/').toLowerCase();
+            const uniqueRecents = [];
+            const seen = new Set();
+            for (const p of recents) {
+                const norm = normalize(p);
+                if (!seen.has(norm)) {
+                    seen.add(norm);
+                    uniqueRecents.push(p);
+                }
+            }
+            // If we found and removed duplicates, update localStorage immediately
+            if (uniqueRecents.length !== recents.length) {
+                recents = uniqueRecents;
+                localStorage.setItem('recentFolders', JSON.stringify(recents));
+            }
+            // -----------------------------------------------------------------
+
+            if (recents.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            container.innerHTML = '<strong>Recent:</strong> ';
+            
+            // Generate our unique display names based on the current history
+            const displayNames = getUniqueDisplayNames(recents);
+
+            recents.forEach(path => {
+                const btn = document.createElement('button');
+                btn.className = 'recent-folder-btn';
+                
+                // Use the unique name calculated earlier
+                btn.innerText = displayNames[path] || path; 
+                btn.title = path; // Hovering still shows the full absolute path
+                
+                btn.onclick = () => {
+                    document.getElementById('dir-path').value = path;
+                    localStorage.setItem('savedPath', path);
+                    loadPromptForPath(path);
+                    scanDirectory();
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        
+        // 5. Scan Logic
         async function scanDirectory() {
             const path = document.getElementById('dir-path').value;
             const useGitignore = document.getElementById('use-gitignore').checked;
             const errorMsg = document.getElementById('error-msg');
             const fileList = document.getElementById('file-list');
             const copyBtn = document.getElementById('copy-btn');
+
+            if (!path) return; // Prevent empty scan on load
 
             errorMsg.innerText = '';
             fileList.innerHTML = '<em>Scanning...</em>';
@@ -109,17 +302,18 @@
 
                 renderFileList(data.files, path);
                 copyBtn.disabled = false;
+                saveRecentFolder(path); // Save to recents only on success
 
             } catch (err) {
                 errorMsg.innerText = 'Failed to communicate with server.';
             }
         }
 
+        // 6. File List Render & Selectors
         function renderFileList(files, basePath) {
             const container = document.getElementById('file-list');
             container.innerHTML = '';
             
-            // Get previously checked files from local storage
             const savedFiles = JSON.parse(localStorage.getItem(`checkedFiles_${basePath}`) || '[]');
 
             files.forEach(file => {
@@ -131,17 +325,12 @@
                 checkbox.value = file.path;
                 checkbox.className = 'file-checkbox';
                 
-                // Determine if it should be checked
                 if (savedFiles.length > 0) {
-                    // If we have history, rely on that
                     checkbox.checked = savedFiles.includes(file.path);
                 } else {
-                    // Since all ignored files are filtered out by the backend, 
-                    // we can safely default everything shown to "checked"
                     checkbox.checked = true; 
                 }
 
-                // Save state when clicked
                 checkbox.addEventListener('change', () => saveCheckedState(basePath));
 
                 const label = document.createElement('span');
@@ -152,9 +341,9 @@
                 container.appendChild(div);
             });
             
-            // Save initial state if it's the first time
             if (savedFiles.length === 0) saveCheckedState(basePath);
         }
+
         function saveCheckedState(basePath) {
             const checkboxes = document.querySelectorAll('.file-checkbox');
             const checkedFiles = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
@@ -171,6 +360,7 @@
             saveCheckedState(document.getElementById('dir-path').value);
         }
 
+        // 7. Generation
         async function generateAndCopy() {
             const copyBtn = document.getElementById('copy-btn');
             const originalText = copyBtn.innerText;
