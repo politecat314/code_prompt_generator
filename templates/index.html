@@ -102,8 +102,15 @@
             localStorage.setItem(`savedPrompt_${currentPath}`, e.target.value);
         });
 
-        // 3. Autocomplete with TAB key
+        // 3. Autocomplete with TAB key & Scan with ENTER key
         document.getElementById('dir-path').addEventListener('keydown', async (e) => {
+            // NEW: Run scan on Enter
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                scanDirectory();
+                return;
+            }
+
             if (e.key === 'Tab') {
                 e.preventDefault(); // Prevent moving focus
                 const pathInput = document.getElementById('dir-path');
@@ -151,31 +158,108 @@
         function saveRecentFolder(path) {
             if (!path) return;
             let recents = JSON.parse(localStorage.getItem('recentFolders') || '[]');
-            // Remove it if it already exists, so we can bump it to the front
-            recents = recents.filter(p => p !== path);
+            
+            // Normalize path to ignore slash direction and case differences
+            const normalize = p => p.replace(/\\/g, '/').toLowerCase();
+            const normalizedNewPath = normalize(path);
+
+            // Remove it if it already exists (using the normalized comparison)
+            recents = recents.filter(p => normalize(p) !== normalizedNewPath);
+            
+            // Bump the newly searched path to the front
             recents.unshift(path);
-            if (recents.length > 3) recents = recents.slice(0, 3);
+            if (recents.length > 3) recents = recents.slice(0, 3); // Keeps last 3
             
             localStorage.setItem('recentFolders', JSON.stringify(recents));
             renderRecentFolders();
+        }
+
+        // Helper function to get unique display names
+        function getUniqueDisplayNames(paths) {
+            const parsed = paths.map(p => ({
+                original: p,
+                parts: p.split(/[\\/]/).filter(Boolean)
+            }));
+            
+            // Start by assuming we just need the last folder name
+            let displayNames = parsed.map(p => ({
+                original: p.original,
+                parts: p.parts,
+                depth: 1,
+                name: p.parts.length > 0 ? p.parts[p.parts.length - 1] : p.original
+            }));
+
+            let hasDuplicates = true;
+            let safety = 0; // Prevent infinite loops
+            
+            while (hasDuplicates && safety < 10) {
+                safety++;
+                hasDuplicates = false;
+                
+                // Count occurrences of each display name
+                const counts = {};
+                displayNames.forEach(item => {
+                    counts[item.name] = (counts[item.name] || 0) + 1;
+                });
+                
+                // If a name is used more than once, add the parent folder to the display name
+                displayNames.forEach(item => {
+                    if (counts[item.name] > 1 && item.depth < item.parts.length) {
+                        item.depth++;
+                        item.name = item.parts.slice(-item.depth).join('/'); // Format: parent/folder
+                        hasDuplicates = true;
+                    }
+                });
+            }
+            
+            // Map original paths to their unique display names
+            const nameMap = {};
+            displayNames.forEach(item => {
+                nameMap[item.original] = item.name;
+            });
+            return nameMap;
         }
 
         function renderRecentFolders() {
             const container = document.getElementById('recent-folders-container');
             let recents = JSON.parse(localStorage.getItem('recentFolders') || '[]');
             
+            // --- NEW: Cleanup existing bugged duplicates from localStorage ---
+            const normalize = p => p.replace(/\\/g, '/').toLowerCase();
+            const uniqueRecents = [];
+            const seen = new Set();
+            for (const p of recents) {
+                const norm = normalize(p);
+                if (!seen.has(norm)) {
+                    seen.add(norm);
+                    uniqueRecents.push(p);
+                }
+            }
+            // If we found and removed duplicates, update localStorage immediately
+            if (uniqueRecents.length !== recents.length) {
+                recents = uniqueRecents;
+                localStorage.setItem('recentFolders', JSON.stringify(recents));
+            }
+            // -----------------------------------------------------------------
+
             if (recents.length === 0) {
                 container.innerHTML = '';
                 return;
             }
 
             container.innerHTML = '<strong>Recent:</strong> ';
+            
+            // Generate our unique display names based on the current history
+            const displayNames = getUniqueDisplayNames(recents);
+
             recents.forEach(path => {
                 const btn = document.createElement('button');
                 btn.className = 'recent-folder-btn';
-                // Show just the last folder name on the button, put full path in tooltip
-                btn.innerText = path.split(/[\\/]/).pop() || path; 
-                btn.title = path;
+                
+                // Use the unique name calculated earlier
+                btn.innerText = displayNames[path] || path; 
+                btn.title = path; // Hovering still shows the full absolute path
+                
                 btn.onclick = () => {
                     document.getElementById('dir-path').value = path;
                     localStorage.setItem('savedPath', path);
@@ -186,6 +270,7 @@
             });
         }
 
+        
         // 5. Scan Logic
         async function scanDirectory() {
             const path = document.getElementById('dir-path').value;
